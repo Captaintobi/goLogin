@@ -6,9 +6,10 @@
 </head>
 <body>
 <h1>Sign up</h1>
-<form method="POST" action="/signup">
+<form method="POST" action="/signup" enctype="multipart/form-data">
     <input type="text" name="username">
     <input type="password" name="password">
+    <input type="file"  name="fileName" multiple >
     <input type="submit" value="Submit">
 </form>
 </body>
