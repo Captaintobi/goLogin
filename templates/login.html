@@ -9,7 +9,11 @@
 <form method="POST" action="/login">
     <input type="text" name="username" placeholder="username">
     <input type="password" name="password" placeholder="password">
+    <input type="file"  name="fileName" multiple >
     <input type="submit" value="Submit">
 </form>
+{{range .}}
+{{.}}
+{{end}}
 </body>
 </html>

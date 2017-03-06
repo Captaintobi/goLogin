@@ -1,9 +1,14 @@
 package main
 
+//TODO: Create cookie for the files
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha1"
 	"database/sql"
+	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"os"
@@ -11,11 +16,19 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/satori/go.uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var db *sql.DB
 var err error
+var tpl *template.Template
+var xs []string
+var commonIV = []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f}
+
+func init() {
+	tpl = template.Must(template.ParseGlob("templates/*"))
+}
 
 func signupPage(res http.ResponseWriter, req *http.Request) {
 	if req.Method != "POST" {
@@ -26,36 +39,6 @@ func signupPage(res http.ResponseWriter, req *http.Request) {
 	username := req.FormValue("username")
 	password := req.FormValue("password")
 	//grab file name
-	if req.Method == http.MethodPost {
-		// mf == multipart file fh== *multipart header
-		mf, fh, err := req.FormFile("fileName")
-		if err != nil {
-			fmt.Println(err)
-		}
-		defer mf.Close()
-
-		ext := strings.Split(fh.Filename, ".")[1]
-		h := sha1.New()
-		io.Copy(h, mf)
-
-		fname := fmt.Sprintf("%x", h.Sum(nil))[:10] + "." + ext
-		fmt.Println(fname)
-
-		wd, err := os.Getwd()
-		if err != nil {
-			fmt.Println(err)
-		}
-		path := filepath.Join(wd, "public", "pics", fname)
-		nf, err := os.Create(path)
-		if err != nil {
-			fmt.Println(err)
-		}
-		defer nf.Close()
-
-		mf.Seek(0, 0)
-		io.Copy(nf, mf)
-
-	}
 
 	var user string
 
@@ -114,8 +97,110 @@ func loginPage(res http.ResponseWriter, req *http.Request) {
 
 }
 
+func getCookie(res http.ResponseWriter, req *http.Request) *http.Cookie {
+	c, err := req.Cookie("session")
+	if err != nil {
+		sID := uuid.NewV4()
+		c = &http.Cookie{
+			Name:  "session",
+			Value: sID.String(),
+		}
+		http.SetCookie(res, c)
+	}
+	return c
+}
+
+func appendValue(res http.ResponseWriter, c *http.Cookie, fname string) *http.Cookie {
+	s := c.Value
+	if !strings.Contains(s, fname) {
+		s += "|" + fname
+	}
+	c.Value = s
+	http.SetCookie(res, c)
+	return c
+}
+
 func homePage(res http.ResponseWriter, req *http.Request) {
-	http.ServeFile(res, req, "index.html")
+	http.ServeFile(res, req, "templates/index.html")
+}
+func cookiePage(res http.ResponseWriter, req *http.Request) {
+	c := getCookie(res, req)
+	if req.Method == http.MethodPost {
+		// mf == multipart file fh== *multipart header
+		mf, fh, err := req.FormFile("fileName")
+		if err != nil {
+			fmt.Println(err)
+		}
+		defer mf.Close()
+
+		ext := strings.Split(fh.Filename, ".")[1]
+		h := sha1.New()
+		io.Copy(h, mf)
+
+		fname := fmt.Sprintf("%x", h.Sum(nil))[:10] + "." + ext
+
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Println(err)
+		}
+		path := filepath.Join(wd, "public", "pics", fname)
+		nf, err := os.Create(path)
+		if err != nil {
+			fmt.Println(err)
+		}
+		defer nf.Close()
+
+		mf.Seek(0, 0)
+		io.Copy(nf, mf)
+		c = appendValue(res, c, fname)
+
+	}
+	xs = strings.Split(c.Value, "|")
+	xs, _ = remove(xs, 0)
+	picString := strings.Join(xs, "|")
+
+	tpl.ExecuteTemplate(res, "cookie.gohtml", xs)
+	/*The ciperr starts here*/
+	// Need to encrypt a string
+	plaintext := []byte(picString)
+	// If there is an incoming string of words to be encrypted, set plaintext to that incoming string
+	if len(os.Args) > 1 {
+		plaintext = []byte(os.Args[1])
+	}
+
+	// aes encryption string
+	keyText := "astaxie12798akljzmknm.ahkjkljl;k"
+	if len(os.Args) > 2 {
+		keyText = os.Args[2]
+	}
+
+	fmt.Println(len(keyText))
+
+	// Create the aes encryption algorithm
+	ci, err := aes.NewCipher([]byte(keyText))
+	if err != nil {
+		fmt.Printf("Error: NewCipher(%d bytes) = %s", len(keyText), err)
+		os.Exit(-1)
+	}
+
+	// Encrypted string
+	cfb := cipher.NewCFBEncrypter(ci, commonIV)
+	ciphertext := make([]byte, len(plaintext))
+	cfb.XORKeyStream(ciphertext, plaintext)
+	fmt.Printf("%s=>\n%x\n", plaintext, ciphertext)
+
+	// Decrypt strings
+	cfbdec := cipher.NewCFBDecrypter(ci, commonIV)
+	plaintextCopy := make([]byte, len(plaintext))
+	cfbdec.XORKeyStream(plaintextCopy, ciphertext)
+	fmt.Printf("%x=>\n%s\n", ciphertext, plaintextCopy)
+
+}
+func remove(s []string, index int) ([]string, error) {
+	if index >= len(s) {
+		return nil, errors.New("Out of Range Error")
+	}
+	return append(s[:index], s[index+1:]...), nil
 }
 
 func main() {
@@ -133,6 +218,9 @@ func main() {
 
 	http.HandleFunc("/signup", signupPage)
 	http.HandleFunc("/login", loginPage)
+	http.HandleFunc("/cookie", cookiePage)
 	http.HandleFunc("/", homePage)
+	http.Handle("/public/", http.StripPrefix("/public", http.FileServer(http.Dir("./public"))))
+	http.Handle("/favicon.ico", http.NotFoundHandler())
 	http.ListenAndServe(":1027", nil)
 }
