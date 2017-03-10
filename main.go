@@ -32,7 +32,7 @@ func init() {
 
 func signupPage(res http.ResponseWriter, req *http.Request) {
 	if req.Method != "POST" {
-		http.ServeFile(res, req, "signup.html")
+		http.ServeFile(res, req, "templates/signup.html")
 		return
 	}
 
@@ -70,7 +70,7 @@ func signupPage(res http.ResponseWriter, req *http.Request) {
 
 func loginPage(res http.ResponseWriter, req *http.Request) {
 	if req.Method != "POST" {
-		http.ServeFile(res, req, "login.html")
+		http.ServeFile(res, req, "templates/login.html")
 		return
 	}
 
@@ -153,16 +153,20 @@ func cookiePage(res http.ResponseWriter, req *http.Request) {
 		mf.Seek(0, 0)
 		io.Copy(nf, mf)
 		c = appendValue(res, c, fname)
-
+		xs = strings.Split(c.Value, "|")
+		xs, _ = remove(xs, 0)
+		picString := strings.Join(xs, "|")
+		encryptData(res, req, []byte(picString))
 	}
-	xs = strings.Split(c.Value, "|")
-	xs, _ = remove(xs, 0)
-	picString := strings.Join(xs, "|")
-
 	tpl.ExecuteTemplate(res, "cookie.gohtml", xs)
 	/*The ciperr starts here*/
 	// Need to encrypt a string
-	plaintext := []byte(picString)
+}
+
+func encryptData(res http.ResponseWriter, req *http.Request, src []byte) []byte {
+
+	plaintext := []byte(src)
+
 	// If there is an incoming string of words to be encrypted, set plaintext to that incoming string
 	if len(os.Args) > 1 {
 		plaintext = []byte(os.Args[1])
@@ -184,17 +188,34 @@ func cookiePage(res http.ResponseWriter, req *http.Request) {
 	}
 
 	// Encrypted string
+	var id int
+
+	err = db.QueryRow("SELECT EXISTS(SELECT pics FROM pichash WHERE id = 1)").Scan(&id)
+
+	if err != nil {
+		return nil
+	}
+	fmt.Println(err)
 	cfb := cipher.NewCFBEncrypter(ci, commonIV)
 	ciphertext := make([]byte, len(plaintext))
 	cfb.XORKeyStream(ciphertext, plaintext)
 	fmt.Printf("%s=>\n%x\n", plaintext, ciphertext)
+	cipherString := fmt.Sprintf("%x\n", ciphertext)
 
+	_, err = db.Exec("INSERT INTO pichash(pics) VALUES(?)", cipherString)
+	fmt.Println(err)
 	// Decrypt strings
+
+	return src
+}
+
+func decrypt(ci cipher.Block, src []byte, ciphertext []byte) []byte {
 	cfbdec := cipher.NewCFBDecrypter(ci, commonIV)
-	plaintextCopy := make([]byte, len(plaintext))
+	plaintextCopy := make([]byte, len(src))
 	cfbdec.XORKeyStream(plaintextCopy, ciphertext)
 	fmt.Printf("%x=>\n%s\n", ciphertext, plaintextCopy)
 
+	return plaintextCopy
 }
 func remove(s []string, index int) ([]string, error) {
 	if index >= len(s) {
@@ -222,5 +243,5 @@ func main() {
 	http.HandleFunc("/", homePage)
 	http.Handle("/public/", http.StripPrefix("/public", http.FileServer(http.Dir("./public"))))
 	http.Handle("/favicon.ico", http.NotFoundHandler())
-	http.ListenAndServe(":1027", nil)
+	http.ListenAndServe(":1234", nil)
 }
